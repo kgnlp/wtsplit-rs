@@ -70,6 +70,22 @@ pub struct ExtractionResult {
     pub offset_mappings: Option<Vec<Vec<(usize, usize)>>>,
 }
 
+/// Builds a lookup table mapping UTF-8 byte offsets to Unicode character indices.
+///
+/// The final entry maps the end-exclusive byte offset to the character count.
+fn bytes_to_char_map(text: &str) -> Vec<usize> {
+    let mut map = vec![0; text.len() + 1];
+    let mut character_count = 0;
+
+    for (char_index, (byte_start, character)) in text.char_indices().enumerate() {
+        map[byte_start..byte_start + character.len_utf8()].fill(char_index);
+        character_count = char_index + 1;
+    }
+
+    map[text.len()] = character_count;
+    map
+}
+
 /// Extract logits from a batch of texts using a SaT model
 ///
 /// This function:
@@ -93,21 +109,20 @@ pub fn extract_sat(
     // Tokenize all texts
     let encodings: Vec<_> = texts
         .iter()
-        .map(|text| {
-            tokenizer
-                .encode(*text, false)
-                .expect("Tokenization failed")
-        })
+        .map(|text| tokenizer.encode(*text, false).expect("Tokenization failed"))
         .collect();
 
     // Get token IDs and offset mappings
     let token_ids: Vec<Vec<u32>> = encodings.iter().map(|e| e.get_ids().to_vec()).collect();
     let offset_mappings: Vec<Vec<(usize, usize)>> = encodings
         .iter()
-        .map(|e| {
-            e.get_offsets()
+        .zip(texts)
+        .map(|(encoding, text)| {
+            let bytes_to_char = bytes_to_char_map(text);
+            encoding
+                .get_offsets()
                 .iter()
-                .map(|&(start, end)| (start, end))
+                .map(|&(start, end)| (bytes_to_char[start], bytes_to_char[end]))
                 .collect()
         })
         .collect();
